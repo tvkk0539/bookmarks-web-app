@@ -1,0 +1,346 @@
+
+Love this idea—let’s make you a clean, fast, and beautiful bookmarking app you can run on GCP Cloud Run (free-tier friendly) and on any VPS, with a flexible database layer (default Firebase; optional MongoDB or PostgreSQL).
+Below is a ready‑to‑copy “Master Prompt for Jules” that fully specifies the app: product scope, UX, architecture, database adapters, security, deployment (Cloud Run + VPS), environment variables, CI/CD, tests, and acceptance criteria—so Jules can build and ship it end‑to‑end.
+
+
+✅ Master Prompt for Jules (Copy‑Paste Everything Below)
+System: You are an expert full‑stack engineer and DevOps architect. You will design and implement a production‑grade, privacy‑first bookmark manager inspired by Linkwarden and Raindrop.io, optimized for performance, simplicity, and aesthetics. The app must deploy on GCP Cloud Run (free‑tier friendly) and on any VPS via Docker. It must support three databases behind a clean adapter interface: Firebase (Firestore) as default, with optional MongoDB and PostgreSQL. Authentication should be Firebase Auth (usable regardless of chosen DB). Your deliverables include code, infra, docs, CI/CD, and tests.
+
+
+1) Product Goals & Principles
+
+Purpose: Save, organize, and search web links—fast, minimal, and delightful.
+Inspiration: Linkwarden, Raindrop.io—do not clone UI; produce an original, tasteful aesthetic.
+Priorities:Speed (snappy interactions, minimal JS)
+Simplicity (one clean surface, no clutter)
+Aesthetics (elegant typography, soft shadows, subtle micro‑interactions)
+Free‑tier friendly (Cloud Run + optional free DB tiers)
+Privacy & Security (server‑side auth checks; secure headers)
+Non‑Goals (v1): Team sharing, collaboration, extensions marketplace, OCR. Keep the core lean.
+
+
+2) Core Features (v1)
+
+Auth: Firebase Auth (Google + Email/Password). Server verifies ID tokens.
+Bookmarks: Add (URL), fetch metadata (title/description/OG image/favicon), edit, delete, favorite, archive/unarchive, mark as read, notes.
+Organization: Collections (folders), tags (multi-tag), quick filters (favorites, unread, archived).
+Search:Keyword search on title/description/tags.
+For Mongo/Postgres: use native text/trigram indices.
+For Firestore: “contains”/array-contains queries + a basic keyword filter.
+Import/Export:Import: Netscape bookmark HTML + JSON
+Export: JSON + CSV
+UI/UX:Grid & list views; responsive; dark/light mode (system default + manual toggle)
+Keyboard shortcuts (e.g., N new, / search, E edit, Del delete)
+Drag‑to‑reorder within a collection (client-side; persist order)
+Multi-select + bulk actions
+PWA essentials: Installable, app icon, offline shell for UI, deferred sync when online.
+
+
+3) Tech Stack
+
+Framework: Next.js (App Router) + TypeScript
+Styling: Tailwind CSS + CSS variables; use accessible components (Headless UI / Radix primitives)
+State: Server Actions + minimal client state (Zustand or just React)
+Build: Node.js 20, pnpm
+Auth: Firebase Auth (client SDK + server token verification)
+DB Adapters:Default: Firebase Firestore (`@google-cloud/firestore` on server; client uses API only)
+MongoDB: MongoDB Atlas or local Mongo via official Node driver (or Prisma Mongo)
+PostgreSQL: Neon/Supabase or local Postgres via Prisma
+Metadata Fetch: Server-side OG scraping with conservative timeouts; sanitize HTML.
+Container: Docker (multi‑stage, alpine); runs on Cloud Run or VPS.
+
+
+4) Architecture & Modules
+4.1 High‑Level
+[Next.js UI] ──calls──> [API Routes / Server Actions]
+                         │           │
+                         │           ├─> [Auth: verify Firebase ID tokens]
+                         │
+                         └─> [Repository Interface: BookmarkRepository, CollectionRepository, UserRepository]
+                                    ├─ FirestoreAdapter (default)
+                                    ├─ MongoAdapter
+                                    └─ PostgresAdapter
+
+
+4.2 Domain Models
+
+User: { id (Firebase UID), email, displayName, photoURL, settings: { theme, layout, density } }
+Collection: { id, userId, name, color, icon, sortOrder, createdAt, updatedAt }
+Bookmark:
+{
+    id, userId, collectionId, url, title, description, image, favicon,
+    tags: string[], favorite: boolean, isArchived: boolean, readAt?: Date,
+    notes?: string, createdAt, updatedAt, domain, og: { siteName?, type?, locale? }
+  }
+
+
+4.3 Repository Interface (TypeScript)
+interface BookmarkRepository {
+  create(b: NewBookmark): Promise<Bookmark>;
+  update(id: string, patch: Partial<Bookmark>, userId: string): Promise<Bookmark>;
+  getById(id: string, userId: string): Promise<Bookmark | null>;
+  list(params: { userId: string; collectionId?: string; q?: string; tags?: string[]; archived?: boolean; favorite?: boolean; limit?: number; cursor?: string }): Promise<{ items: Bookmark[]; nextCursor?: string }>;
+  delete(id: string, userId: string): Promise<void>;
+  bulkUpdate(ids: string[], patch: Partial<Bookmark>, userId: string): Promise<number>;
+  upsertMany(list: NewBookmark[], userId: string): Promise<number>;
+}
+
+
+Create equivalent interfaces for CollectionRepository and a simple UserRepository.
+4.4 Adapters
+
+FirestoreAdapter:Collections: users/{uid}/collections, users/{uid}/bookmarks
+Queries: for “search”, do lowercased keyword fields and simple array-contains for tags; fallback to client-side filtering if needed for multi-term.
+MongoAdapter:Use mongodb Node driver or Prisma Mongo. Create indexes: userId, collectionId, tags, text index on title/description/domain.
+PostgresAdapter:Use Prisma. Tables: users, collections, bookmarks, tags (join via bookmark_tags).
+Indexes: LOWER(title), trigram (if extension allowed) or GIN on to_tsvector(...).
+All adapters must pass the same unit tests and be switched via DB_PROVIDER=firestore|mongo|postgres.
+
+
+5) API Surface (Next.js Route Handlers)
+
+All endpoints require a valid Firebase ID token (Bearer token).
+Endpoints:POST /api/bookmarks – add (also triggers metadata fetch)
+GET /api/bookmarks – list (filters + pagination)
+GET /api/bookmarks/:id – get
+PATCH /api/bookmarks/:id – update
+DELETE /api/bookmarks/:id – delete
+POST /api/bookmarks/bulk – bulk actions (archive, tag, delete)
+POST /api/import – upload bookmarks HTML/JSON
+GET /api/export – export JSON or CSV
+GET /api/meta?url=... – fetch sanitized OG metadata (server-side cache, TTL)
+Validation: zod schemas for inputs/outputs.
+
+
+6) UI/UX Specs
+
+Aesthetic: Minimal, airy spacing, 12‑column grid. Rounded cards, subtle gradients, 60fps transitions.
+Typography: Inter / system fonts.
+Colors: Neutral base; accent via collection color tokens. Respect prefers-color-scheme.
+Layouts:Home: Search bar, quick filters (All, Favorites, Unread, Archived), Collections sidebar.
+Bookmarks Grid: Card with image (or domain favicon), title, domain, tags, quick actions (fav, archive, edit).
+Add Modal: URL input → fetch metadata → edit → save.
+Settings: Theme, density, import/export.
+Accessibility: Focus rings, ARIA labels, motion-reduced mode, high-contrast option.
+
+
+7) Security & Privacy
+
+Verify Firebase ID tokens on every API request (no public write endpoints).
+Principle of least privilege in Firestore rules (if used client-side; server owns writes).
+CORS locked to app domain(s).
+Rate limiting (IP + user) on write endpoints and metadata fetch.
+Sanitize metadata HTML; block JavaScript URLs.
+HTTP headers: CSP via next-safe, HSTS, X-Content-Type-Options, Referrer-Policy.
+Secrets via environment variables only; never commit.
+
+
+8) Performance
+
+Cloud Run friendly:min-instances: 0 (scale-to-zero), high concurrency (e.g., 80), moderate memory (e.g., 512Mi)
+Avoid unnecessary cold-start weight (lean Docker image, node:20‑alpine; prune dev deps)
+Client: Code‑split routes, image optimization, prefetch hover.
+Server: Cache metadata responses (in-memory LRU or Firestore/Mongo/Postgres cache table).
+Indexing: DB indices as listed; keep queries O(log n) on userId, collectionId, tags.
+
+
+9) Free‑Tier Strategy
+
+Cloud Run: Configure to scale to zero and keep images tiny to minimize cold‑start and runtime. (Note: Staying “free forever” depends on provider policies; keep budgets/alerts set to $0.00 and optimize for low usage.)
+Databases:Default Firestore (Firebase): Use cautiously; depending on Firebase/Google Cloud billing rules, server-side access may require pay‑as‑you‑go billing. Keep reads/writes minimal and batch operations.
+MongoDB (Atlas M0): Offer a one‑click path with free tier for hobby use.
+Postgres (Neon/Supabase free plans): Offer easy setup scripts.
+Provide an environment switch so users can choose the truly free path (e.g., Mongo/Neon) while keeping Firestore as default in code.
+
+
+Implementation Note: Add budget alerts and quotas for all cloud resources. Document realistic monthly usage within free tiers and ways to stay under limits.
+
+
+
+
+10) Data Persistence & Schema
+Firestore (recommended structure)
+users/{uid}
+  collections/{collectionId}
+  bookmarks/{bookmarkId}
+
+
+
+Composite indexes: (userId, collectionId), (userId, favorite), (userId, isArchived), (userId, tags)
+For search: store keywords (lowercased concatenation of title + domain + tags) to enable rudimentary filtering.
+MongoDB
+
+Collections: users, collections, bookmarks
+Indexes:bookmarks: { userId: 1, collectionId: 1, favorite: 1, isArchived: 1, tags: 1 }
+Text index on title, description, domain
+Postgres (Prisma schema sketch)
+
+Tables: users, collections, bookmarks, bookmark_tags, tags
+Indexes for common filters + a text search index (tsvector). Use migrations.
+
+
+11) Metadata Fetch Service
+
+Endpoint GET /api/meta?url=...
+Use node-fetch + cheerio (or a minimal OG parser) with timeout (3s) and redirect limit.
+Extract: title, description, OG image, favicon, site name, domain.
+Sanitize output (no raw HTML). Cache result by domain+path for 24h.
+
+
+12) Environment Variables (`.env.example`)
+# App
+NODE_ENV=production
+NEXT_PUBLIC_APP_URL=https://<your-domain>
+APP_NAME=Booklight
+
+# Auth (Firebase)
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+FIREBASE_PROJECT_ID=...
+FIREBASE_CLIENT_EMAIL=...
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# DB selection
+DB_PROVIDER=firestore   # or: mongo | postgres
+
+# Mongo
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/app
+
+# Postgres
+POSTGRES_URL=postgresql://user:pass@host:5432/db
+
+# Server
+PORT=8080
+
+
+
+
+13) Docker & Deploy
+13.1 Dockerfile (multi-stage; Next.js)
+
+Multi-stage build (deps → build → runtime)
+Base: node:20-alpine
+Set PORT=8080
+Use pnpm and prune dev dependencies at the end
+Healthcheck: curl -f http://localhost:8080/api/health || exit 1
+13.2 Cloud Run
+
+Build & push:
+gcloud builds submit --tag gcr.io/$PROJECT_ID/booklight
+
+
+
+Deploy:
+gcloud run deploy booklight \
+    --image gcr.io/$PROJECT_ID/booklight \
+    --platform managed \
+    --region <REGION> \
+    --allow-unauthenticated \
+    --port 8080 \
+    --min-instances 0 \
+    --concurrency 80 \
+    --memory 512Mi \
+    --set-env-vars DB_PROVIDER=firestore,PORT=8080 \
+    --set-secrets FIREBASE_PRIVATE_KEY=projects/$PROJECT_ID/secrets/FIREBASE_PRIVATE_KEY:latest
+
+
+
+Add the rest of env vars (Firebase config, DB URIs) with --set-env-vars or Secret Manager.
+13.3 VPS (Docker Compose)
+Provide docker-compose.yml to run:
+
+app (Next.js) + optional mongo or postgres service
+Named volumes for DB data
+Expose 3000:3000 (or 8080:8080 if you keep Cloud Run conventions)
+
+
+14) CI/CD
+
+GitHub Actions:Lint & typecheck on PRs
+Unit tests (Jest) + E2E (Playwright) on main branch
+Build Docker image
+Optional: Deploy to Cloud Run on tagged releases with environment protection rules
+
+
+15) Tests
+
+Unit: repository interface (run the same suite against Firestore/Mongo/Postgres via env matrix)
+API: endpoint handlers; token verification; validation errors
+E2E: sign-in → add/edit/delete → search → import/export → dark mode → PWA install
+Perf: cold start < 2s on moderate image; typical API < 150ms p50 for cached queries
+
+
+16) Telemetry & Logging
+
+Minimal server logs (structured JSON). No PII in logs.
+Health endpoint /api/health returns {status:"ok"} (unauthenticated) and /api/health/auth (requires token).
+
+
+17) Documentation
+
+README with:Quickstart (Firebase + Cloud Run + local dev)
+DB selection matrix and how to switch providers
+Free‑tier notes and budget alerts
+Troubleshooting (CORS, tokens, cold starts)
+/docs:Architecture overview
+Adapters guide
+Import/Export format
+Security checklist
+
+
+18) Acceptance Criteria
+
+Runs locally with any selected DB via .env and Docker.
+Deploys to Cloud Run (scale-to-zero, working auth) and to a VPS with Docker Compose.
+Switch DB by changing DB_PROVIDER and env vars—no code changes.
+Firebase Auth works across all DBs; server enforces token validation.
+Can add/edit/delete/search bookmarks with metadata and tags.
+Import from Netscape HTML and JSON; export to JSON/CSV.
+Responsive, clean UI with dark/light themes and keyboard shortcuts.
+Basic rate limiting, CSP, and secure headers.
+Full README + CI + tests green.
+
+
+19) Nice‑to‑Have (Backlog)
+
+Web clipper browser extension (later)
+Archive snapshot to object storage (PDF/image) on demand
+Public share link (read‑only) per collection
+AI tag suggestions (queued; optional)
+
+
+20) Deliverables
+
+GitHub repo with:apps/web (Next.js), packages/core (domain & ports), packages/adapters (firestore/mongo/postgres)
+prisma schema (for Postgres), seeds, migrations
+Dockerfile, docker-compose.yml
+GitHub Actions workflows
+Comprehensive README and /docs
+One‑click scripts for:Local dev
+Cloud Run deployment
+DB setup for each provider
+
+
+End of Master Prompt ✅
+
+
+Extra Notes for You (not part of the prompt)
+Free‑tier realism tips
+
+Cloud Run: Set min-instances=0, tiny image, and high concurrency. Add GCP budgets and alerts to avoid accidental charges.
+Firestore (Firebase): Server‑side access may need pay‑as‑you‑go billing. If “free forever” is critical, consider using MongoDB Atlas M0 or Neon Postgres as your default runtime DB and keep Firestore as an optional adapter you can switch to later.
+Auth: Firebase Auth is great as a consistent auth layer for all DBs and doesn’t require you to store passwords.
+Naming idea
+
+Call it Booklight ✨—minimal and bright.
+
+
+Want me to tailor this?
+I can customize the prompt for:
+
+A specific UI style (fonts, color palette, iconography)
+Which DB you want to start with in practice (to best align with “free forever”)
+A pre‑filled GitHub Actions pipeline and gcloud scripts
+A minimal wireframe pack
+Just say the word, and I’ll adapt it to your preferences.
